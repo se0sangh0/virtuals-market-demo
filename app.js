@@ -39,12 +39,65 @@ function updateWalletView() {
   $("walletState").textContent = state.walletConnected ? "연결됨" : "미연결";
   $("walletAddress").textContent = state.walletAddress;
   $("balance").textContent = `${format(state.balance)} VIRTUAL`;
+  $("connectWalletBtn").textContent = state.walletConnected ? "지갑 연결 해제" : "지갑 연결";
 }
 
-function connectWalletMock() {
-  state.walletConnected = !state.walletConnected;
-  state.walletAddress = state.walletConnected ? "0xDA...B1E" : "-";
-  appendTx({ type: state.walletConnected ? "WALLET_CONNECT" : "WALLET_DISCONNECT", amount: 0, note: "wallet toggle" });
+async function connectWallet() {
+  if (!window.ethereum) {
+    alert("MetaMask(또는 EVM 지갑)가 필요해요. 설치 후 다시 시도해줘.");
+    return;
+  }
+
+  try {
+    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    const account = accounts?.[0];
+    if (!account) return;
+
+    // Base Mainnet (0x2105) 우선
+    const targetChainId = "0x2105";
+    let currentChainId = await window.ethereum.request({ method: "eth_chainId" });
+
+    if (currentChainId !== targetChainId) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: targetChainId }]
+        });
+      } catch (switchError) {
+        // 체인이 없는 경우 추가 시도
+        if (switchError.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: targetChainId,
+              chainName: "Base Mainnet",
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://mainnet.base.org"],
+              blockExplorerUrls: ["https://basescan.org"]
+            }]
+          });
+        } else {
+          throw switchError;
+        }
+      }
+      currentChainId = await window.ethereum.request({ method: "eth_chainId" });
+    }
+
+    state.walletConnected = true;
+    state.walletAddress = `${account.slice(0, 6)}...${account.slice(-4)}`;
+    appendTx({ type: "WALLET_CONNECT", amount: 0, note: `connected ${state.walletAddress} (${currentChainId})` });
+    updateWalletView();
+    persistState();
+  } catch (err) {
+    console.error(err);
+    alert(`지갑 연결 실패: ${err?.message || "알 수 없는 오류"}`);
+  }
+}
+
+function disconnectWallet() {
+  state.walletConnected = false;
+  state.walletAddress = "-";
+  appendTx({ type: "WALLET_DISCONNECT", amount: 0, note: "manual disconnect" });
   updateWalletView();
   persistState();
 }
@@ -233,8 +286,32 @@ function init() {
   bindAdminForm();
   renderMachineState();
 
-  $("connectWalletBtn").addEventListener("click", connectWalletMock);
+  $("connectWalletBtn").addEventListener("click", async () => {
+    if (state.walletConnected) {
+      disconnectWallet();
+      return;
+    }
+    await connectWallet();
+  });
   $("searchInput").addEventListener("input", renderAgents);
+
+  if (window.ethereum) {
+    window.ethereum.on("accountsChanged", (accounts) => {
+      if (!accounts || accounts.length === 0) {
+        disconnectWallet();
+        return;
+      }
+      state.walletConnected = true;
+      state.walletAddress = `${accounts[0].slice(0, 6)}...${accounts[0].slice(-4)}`;
+      updateWalletView();
+      persistState();
+    });
+
+    window.ethereum.on("chainChanged", () => {
+      appendTx({ type: "CHAIN_CHANGED", amount: 0, note: "wallet network changed" });
+      persistState();
+    });
+  }
 }
 
 window.buyAgent = buyAgent;
