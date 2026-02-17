@@ -16,13 +16,53 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body || $json || {};\nconst orderId = String(body.orderId || '').trim();\nconst txHash = String(body.txHash || '').trim();\nconst order = body.order || {};\n\nif (!orderId) return [{ json: { ok: false, error: 'order_id_required' } }];\nif (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) return [{ json: { ok: false, error: 'invalid_tx_hash' } }];\n\nconst buyerAddress = String(order.buyerAddress || '').toLowerCase();\nconst merchantAddress = String(order.merchantAddress || '').toLowerCase();\nconst usdcAmountMicro = String(order.usdcAmountMicro || '');\nconst expiresAt = String(order.expiresAt || '');\n\nif (!/^0x[a-fA-F0-9]{40}$/.test(buyerAddress)) return [{ json: { ok: false, error: 'invalid_order_buyer' } }];\nif (!/^0x[a-fA-F0-9]{40}$/.test(merchantAddress)) return [{ json: { ok: false, error: 'invalid_order_merchant' } }];\nif (!/^\\d+$/.test(usdcAmountMicro)) return [{ json: { ok: false, error: 'invalid_order_amount' } }];\nif (!expiresAt || new Date(expiresAt).getTime() < Date.now()) return [{ json: { ok: false, error: 'order_expired' } }];\n\nconst rpcUrl = 'https://mainnet.base.org';\nconst usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';\n\nconst rpc = async (method, params) => {\n  const res = await fetch(rpcUrl, {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })\n  });\n  return res.json();\n};\n\nconst [txResp, rcResp] = await Promise.all([\n  rpc('eth_getTransactionByHash', [txHash]),\n  rpc('eth_getTransactionReceipt', [txHash])\n]);\n\nconst tx = txResp?.result;\nconst receipt = rcResp?.result;\nif (!tx || !receipt) return [{ json: { ok: false, error: 'tx_not_found_or_pending' } }];\nif (String(receipt.status).toLowerCase() !== '0x1') return [{ json: { ok: false, error: 'tx_failed' } }];\n\nif (String(tx.from || '').toLowerCase() !== buyerAddress) return [{ json: { ok: false, error: 'tx_from_mismatch' } }];\nif (String(tx.to || '').toLowerCase() !== usdc) return [{ json: { ok: false, error: 'tx_to_not_usdc_contract' } }];\n\nconst parseTransferInput = (data='') => {\n  if (!data.startsWith('0xa9059cbb')) return null;\n  const hex = data.slice(10);\n  if (hex.length < 128) return null;\n  const toHex = hex.slice(0, 64);\n  const amtHex = hex.slice(64, 128);\n  const to = `0x${toHex.slice(24)}`.toLowerCase();\n  const amount = BigInt(`0x${amtHex}`).toString();\n  return { to, amount };\n};\n\nconst parsed = parseTransferInput(String(tx.input || ''));\nif (!parsed) return [{ json: { ok: false, error: 'not_erc20_transfer' } }];\nif (parsed.to !== merchantAddress) return [{ json: { ok: false, error: 'merchant_mismatch' } }];\nif (parsed.amount !== usdcAmountMicro) return [{ json: { ok: false, error: 'amount_mismatch' } }];\n\nreturn [{ json: { ok: true, order: { id: orderId, buyerAddress, merchantAddress, usdcAmountMicro, txHash, confirmedAt: new Date().toISOString() } } }];"
+        "jsCode": "const body = $json.body || $json || {};\nconst orderId = String(body.orderId || '').trim();\nconst txHash = String(body.txHash || '').trim();\nconst order = body.order || {};\n\nif (!orderId) return [{ json: { ok: false, error: 'order_id_required' } }];\nif (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) return [{ json: { ok: false, error: 'invalid_tx_hash' } }];\n\nconst buyerAddress = String(order.buyerAddress || '').toLowerCase();\nconst merchantAddress = String(order.merchantAddress || '').toLowerCase();\nconst usdcAmountMicro = String(order.usdcAmountMicro || '');\nconst expiresAt = String(order.expiresAt || '');\n\nif (!/^0x[a-fA-F0-9]{40}$/.test(buyerAddress)) return [{ json: { ok: false, error: 'invalid_order_buyer' } }];\nif (!/^0x[a-fA-F0-9]{40}$/.test(merchantAddress)) return [{ json: { ok: false, error: 'invalid_order_merchant' } }];\nif (!/^\\d+$/.test(usdcAmountMicro)) return [{ json: { ok: false, error: 'invalid_order_amount' } }];\nif (!expiresAt || new Date(expiresAt).getTime() < Date.now()) return [{ json: { ok: false, error: 'order_expired' } }];\n\nreturn [{ json: { ok: true, orderId, txHash, buyerAddress, merchantAddress, usdcAmountMicro, expiresAt } }];"
       },
       "id": "2",
-      "name": "Confirm Logic",
+      "name": "Prepare Order",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [540, 300]
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://mainnet.base.org",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getTransactionByHash\",\"params\":[\"{{$json.txHash}}\"]}",
+        "options": {}
+      },
+      "id": "3",
+      "name": "RPC Get Tx",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://mainnet.base.org",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getTransactionReceipt\",\"params\":[\"{{$('Prepare Order').item.json.txHash}}\"]}",
+        "options": {}
+      },
+      "id": "4",
+      "name": "RPC Get Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const order = $('Prepare Order').item.json;\nconst tx = $('RPC Get Tx').item.json.result;\nconst receipt = $json.result;\n\nif (!tx || !receipt) return [{ json: { ok: false, error: 'tx_not_found_or_pending' } }];\nif (String(receipt.status).toLowerCase() !== '0x1') return [{ json: { ok: false, error: 'tx_failed' } }];\n\nconst usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';\nif (String(tx.from || '').toLowerCase() !== order.buyerAddress) return [{ json: { ok: false, error: 'tx_from_mismatch' } }];\nif (String(tx.to || '').toLowerCase() !== usdc) return [{ json: { ok: false, error: 'tx_to_not_usdc_contract' } }];\n\nconst parseTransferInput = (data='') => {\n  if (!data.startsWith('0xa9059cbb')) return null;\n  const hex = data.slice(10);\n  if (hex.length < 128) return null;\n  const toHex = hex.slice(0, 64);\n  const amtHex = hex.slice(64, 128);\n  const to = `0x${toHex.slice(24)}`.toLowerCase();\n  const amount = BigInt(`0x${amtHex}`).toString();\n  return { to, amount };\n};\n\nconst parsed = parseTransferInput(String(tx.input || ''));\nif (!parsed) return [{ json: { ok: false, error: 'not_erc20_transfer' } }];\nif (parsed.to !== order.merchantAddress) return [{ json: { ok: false, error: 'merchant_mismatch' } }];\nif (parsed.amount !== order.usdcAmountMicro) return [{ json: { ok: false, error: 'amount_mismatch' } }];\n\nreturn [{ json: { ok: true, order: { id: order.orderId, buyerAddress: order.buyerAddress, merchantAddress: order.merchantAddress, usdcAmountMicro: order.usdcAmountMicro, txHash: order.txHash, confirmedAt: new Date().toISOString() } } }];"
+      },
+      "id": "5",
+      "name": "Verify Confirm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 300]
     },
     {
       "parameters": {
@@ -38,18 +78,27 @@
           }
         }
       },
-      "id": "3",
+      "id": "6",
       "name": "Respond Confirm",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [800, 300]
+      "position": [1470, 300]
     }
   ],
   "connections": {
     "Webhook Confirm Order": {
-      "main": [[{ "node": "Confirm Logic", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Prepare Order", "type": "main", "index": 0 }]]
     },
-    "Confirm Logic": {
+    "Prepare Order": {
+      "main": [[{ "node": "RPC Get Tx", "type": "main", "index": 0 }]]
+    },
+    "RPC Get Tx": {
+      "main": [[{ "node": "RPC Get Receipt", "type": "main", "index": 0 }]]
+    },
+    "RPC Get Receipt": {
+      "main": [[{ "node": "Verify Confirm", "type": "main", "index": 0 }]]
+    },
+    "Verify Confirm": {
       "main": [[{ "node": "Respond Confirm", "type": "main", "index": 0 }]]
     }
   },
