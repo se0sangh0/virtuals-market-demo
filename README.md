@@ -33,8 +33,10 @@ http://localhost:8787
 - 토큰: USDC (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
 - 결제 방식: `eth_sendTransaction`으로 USDC 컨트랙트 `transfer(address,uint256)` 호출
 - 정산 지갑 주소를 UI에서 설정 후 저장하여 사용
+- tx 제출 후 `eth_getTransactionReceipt` + `eth_blockNumber` 폴링으로 **N confirmations(기본 2)** 확인 뒤 확정 처리
+- 중복 클릭 방지(결제 처리 중 UI 잠금)
 
-> 주의: 이 데모는 결제 성공 시 프론트 상태를 업데이트합니다. 프로덕션에서는 백엔드에서 tx receipt 검증/정산 확정 로직이 반드시 필요합니다.
+> 주의: 프로덕션에서는 프론트 검증만으로 충분하지 않습니다. 서버에서 tx hash 검증, 이벤트 파싱, 중복 주문 방지 키(idempotency), 사용자 권한 검증을 반드시 추가하세요.
 
 ## 다음 확장 아이디어
 1. 트랜잭션 receipt 확인 + 확정(confirmation) 후 자산 지급

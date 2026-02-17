@@ -3,6 +3,9 @@ const TARGET_CHAIN_ID = "0x2105"; // Base Mainnet
 const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const USDC_MICRO_PER_VIRTUAL = 50000n; // 0.05 USDC per 1 VIRTUAL
 const MAX_TEXT_LEN = 120;
+const TX_CONFIRMATIONS_REQUIRED = 2;
+const TX_POLL_MS = 2500;
+const TX_TIMEOUT_MS = 180000;
 
 const seedAgents = [
   { id: "a1", name: "SEO Writer Agent", type: "Content", desc: "키워드 리서치 + 블로그 초안 자동 작성", price: 120, owners: 214, rating: 4.6, mrr: 1800 },
@@ -19,7 +22,8 @@ const state = {
   agents: [...seedAgents],
   holdings: {},
   txs: [],
-  selectedAgentId: null
+  selectedAgentId: null,
+  processingTx: false
 };
 
 const $ = (id) => document.getElementById(id);
@@ -86,6 +90,21 @@ function updateWalletView() {
   $("paymentMode").textContent = `USDC on Base (1 VIRTUAL = ${(Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000).toFixed(2)} USDC)`;
   $("merchantAddress").value = state.merchantAddress || "";
   $("connectWalletBtn").textContent = state.walletConnected ? "지갑 연결 해제" : "지갑 연결";
+}
+
+function setProcessingTx(on) {
+  state.processingTx = on;
+  const controls = document.querySelectorAll("button, input");
+  controls.forEach((el) => {
+    if (el.id === "stateDump") return;
+    if (on) {
+      el.dataset.prevDisabled = el.disabled ? "1" : "0";
+      el.disabled = true;
+    } else {
+      el.disabled = el.dataset.prevDisabled === "1";
+      delete el.dataset.prevDisabled;
+    }
+  });
 }
 
 async function ensureBaseChain() {
@@ -283,9 +302,39 @@ async function payWithUsdc(fromAddress, toAddress, amountMicro) {
   return window.ethereum.request({ method: "eth_sendTransaction", params: txParams });
 }
 
+function hexToBigInt(hexValue) {
+  if (!hexValue) return 0n;
+  return BigInt(hexValue);
+}
+
+async function waitForReceiptConfirmed(txHash, requiredConfirmations = TX_CONFIRMATIONS_REQUIRED) {
+  const started = Date.now();
+
+  while (Date.now() - started < TX_TIMEOUT_MS) {
+    const [receipt, latestBlockHex] = await Promise.all([
+      window.ethereum.request({ method: "eth_getTransactionReceipt", params: [txHash] }),
+      window.ethereum.request({ method: "eth_blockNumber" })
+    ]);
+
+    if (receipt && receipt.blockNumber) {
+      const txBlock = hexToBigInt(receipt.blockNumber);
+      const latestBlock = hexToBigInt(latestBlockHex);
+      const confirmations = latestBlock >= txBlock ? Number(latestBlock - txBlock + 1n) : 0;
+      if (confirmations >= requiredConfirmations) {
+        return { receipt, confirmations };
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, TX_POLL_MS));
+  }
+
+  throw new Error(`트랜잭션 확인 대기 시간 초과 (${Math.round(TX_TIMEOUT_MS / 1000)}s)`);
+}
+
 async function buyAgent(id) {
   const agent = state.agents.find((a) => a.id === id);
   if (!agent) return;
+  if (state.processingTx) return alert("이미 결제 처리 중이야. 잠시만 기다려줘.");
 
   if (!state.walletConnected || !state.walletFullAddress) return alert("지갑을 먼저 연결해줘.");
   if (!state.merchantAddress || !isValidAddress(state.merchantAddress)) return alert("먼저 정산 지갑 주소를 저장해줘.");
@@ -301,21 +350,28 @@ async function buyAgent(id) {
   const amountMicro = usdcMicroFromVirtual(agent.price);
   const amountUsdc = Number(amountMicro) / 1_000_000;
   const ok = confirm(
-    `[USDC 결제 확인]\n에이전트: ${agent.name}\n보내는 토큰: USDC\n금액: ${amountUsdc.toFixed(2)} USDC\n수령 주소: ${state.merchantAddress}\n진행할까?`
+    `[USDC 결제 확인]\n에이전트: ${agent.name}\n보내는 토큰: USDC\n금액: ${amountUsdc.toFixed(2)} USDC\n수령 주소: ${state.merchantAddress}\n확정 대기: ${TX_CONFIRMATIONS_REQUIRED} 컨펌\n진행할까?`
   );
   if (!ok) return;
 
   try {
+    setProcessingTx(true);
     const txHash = await payWithUsdc(state.walletFullAddress, state.merchantAddress, amountMicro);
+    appendTx({ type: "TX_SUBMITTED", amount: 0, note: `tx ${txHash}` });
+
+    const { receipt, confirmations } = await waitForReceiptConfirmed(txHash, TX_CONFIRMATIONS_REQUIRED);
+    if (!receipt || receipt.status !== "0x1") {
+      throw new Error("트랜잭션이 체인에서 실패(status!=1)했어.");
+    }
 
     state.balance -= agent.price;
     state.holdings[id] = (state.holdings[id] || 0) + 1;
     agent.owners += 1;
 
     appendTx({
-      type: "BUY_USDC",
+      type: "BUY_USDC_CONFIRMED",
       amount: agent.price,
-      note: `${agent.name} 결제 ${amountUsdc.toFixed(2)} USDC / tx ${txHash.slice(0, 10)}...`
+      note: `${agent.name} ${amountUsdc.toFixed(2)} USDC / ${confirmations} conf / tx ${txHash.slice(0, 10)}...`
     });
 
     updateWalletView();
@@ -323,11 +379,14 @@ async function buyAgent(id) {
     renderAgents();
     if (state.selectedAgentId === id) selectAgent(id);
     persistState();
+    alert(`결제 확정 완료! (${confirmations} confirmations)`);
   } catch (err) {
     console.error(err);
     alert(`USDC 결제 실패: ${err?.message || "알 수 없는 오류"}`);
     appendTx({ type: "BUY_FAILED", amount: 0, note: sanitizeText(err?.message || "payment failed", 120) });
     persistState();
+  } finally {
+    setProcessingTx(false);
   }
 }
 
@@ -415,7 +474,9 @@ function renderMachineState() {
       token: "USDC",
       tokenAddress: USDC_BASE_ADDRESS,
       merchantAddress: state.merchantAddress,
-      usdcPerVirtual: Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000
+      usdcPerVirtual: Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000,
+      requiredConfirmations: TX_CONFIRMATIONS_REQUIRED,
+      timeoutMs: TX_TIMEOUT_MS
     },
     balance: state.balance,
     agentCount: state.agents.length,
