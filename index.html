@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Agent Market Demo</title>
+  <meta name="description" content="기능 중심 Agent Market MVP 데모" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-app="agent-market-demo" data-version="2.0.0">
+  <header class="topbar" aria-label="상단 상태 바">
+    <h1>🤖 Agent Market (Functional Demo)</h1>
+    <div class="wallet-box" data-testid="wallet-status">
+      <div><strong>지갑:</strong> <span id="walletState">미연결</span></div>
+      <div><strong>주소:</strong> <code id="walletAddress">-</code></div>
+      <div><strong>잔액:</strong> <span id="balance">1,000 VIRTUAL</span></div>
+      <button id="connectWalletBtn" class="secondary" aria-label="지갑 연결">지갑 연결(mock)</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel" aria-labelledby="marketTitle" data-section="market">
+      <div class="panel-head">
+        <h2 id="marketTitle">에이전트 마켓</h2>
+        <label>검색
+          <input id="searchInput" type="text" placeholder="이름/설명 검색" aria-label="에이전트 검색" />
+        </label>
+      </div>
+      <div id="agentList" class="grid" role="list" aria-label="에이전트 목록"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="detailTitle" data-section="detail">
+      <h2 id="detailTitle">에이전트 상세</h2>
+      <div id="agentDetail" class="detail empty">왼쪽에서 에이전트를 선택해줘.</div>
+    </section>
+
+    <section class="panel" aria-labelledby="portfolioTitle" data-section="portfolio">
+      <h2 id="portfolioTitle">내 포트폴리오</h2>
+      <div id="portfolio" class="stack"></div>
+
+      <h3>거래 히스토리</h3>
+      <div id="txHistory" class="history" data-testid="tx-history"></div>
+
+      <h3>수익화 시뮬레이터</h3>
+      <div class="sim">
+        <label>월 유료 사용자 수 <input id="users" type="number" min="0" value="50" /></label>
+        <label>1인당 월 결제 (VIRTUAL) <input id="arpu" type="number" min="0" value="20" /></label>
+        <label>운영비율 (%) <input id="costRate" type="number" min="0" max="100" value="35" /></label>
+        <button id="calcBtn">예상 수익 계산</button>
+        <div id="result" class="result"></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="adminTitle" data-section="admin">
+      <h2 id="adminTitle">관리자: 에이전트 등록</h2>
+      <form id="agentForm" class="sim" novalidate>
+        <label>이름 <input name="name" required minlength="2" /></label>
+        <label>카테고리 <input name="type" required /></label>
+        <label>설명 <input name="desc" required minlength="5" /></label>
+        <label>가격(VIRTUAL) <input name="price" type="number" min="1" required /></label>
+        <button type="submit">신규 에이전트 추가</button>
+      </form>
+      <div id="formMsg" class="muted"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="machineTitle" data-section="machine">
+      <h2 id="machineTitle">Machine Readable State</h2>
+      <p class="muted">AI/스크립트가 빠르게 읽도록 현재 상태 JSON을 노출합니다.</p>
+      <textarea id="stateDump" rows="10" readonly aria-label="상태 JSON"></textarea>
+    </section>
+  </main>
+
+  <template id="agentCardTpl">
+    <article class="card" role="listitem">
+      <div class="row">
+        <h3 class="name"></h3>
+        <span class="tag"></span>
+      </div>
+      <p class="desc"></p>
+      <div class="meta">
+        <span class="price"></span>
+        <span class="owners"></span>
+      </div>
+      <div class="card-actions">
+        <button class="viewBtn secondary">상세</button>
+        <button class="buyBtn">구매</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
