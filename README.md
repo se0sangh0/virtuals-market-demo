@@ -28,8 +28,16 @@ http://localhost:8787
 - 구매 전 확인 다이얼로그 추가
 - Base Mainnet 체인 검증 후 구매 허용
 
+## USDC 결제(적용됨)
+- 네트워크: Base Mainnet (`0x2105`)
+- 토큰: USDC (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
+- 결제 방식: `eth_sendTransaction`으로 USDC 컨트랙트 `transfer(address,uint256)` 호출
+- 정산 지갑 주소를 UI에서 설정 후 저장하여 사용
+
+> 주의: 이 데모는 결제 성공 시 프론트 상태를 업데이트합니다. 프로덕션에서는 백엔드에서 tx receipt 검증/정산 확정 로직이 반드시 필요합니다.
+
 ## 다음 확장 아이디어
-1. 실제 결제(USDC/$VIRTUAL) 플로우 연동
+1. 트랜잭션 receipt 확인 + 확정(confirmation) 후 자산 지급
 2. 서명 기반 주문(오프체인 주문 + 온체인 정산)
 3. 거래 로그/수익 정산 백엔드(Node + DB)
 4. 감사 로그/권한 레벨(운영자·빌더·사용자) 분리

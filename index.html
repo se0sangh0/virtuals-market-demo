@@ -8,13 +8,18 @@
   <meta name="description" content="기능 중심 Agent Market MVP 데모" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body data-app="agent-market-demo" data-version="2.0.0">
+<body data-app="agent-market-demo" data-version="2.1.0">
   <header class="topbar" aria-label="상단 상태 바">
     <h1>🤖 Agent Market (Functional Demo)</h1>
     <div class="wallet-box" data-testid="wallet-status">
       <div><strong>지갑:</strong> <span id="walletState">미연결</span></div>
       <div><strong>주소:</strong> <code id="walletAddress">-</code></div>
       <div><strong>잔액:</strong> <span id="balance">1,000 VIRTUAL</span></div>
+      <div><strong>결제:</strong> <span id="paymentMode">USDC on Base</span></div>
+      <label>정산 지갑(USDC 수령)
+        <input id="merchantAddress" type="text" placeholder="0x..." aria-label="정산 지갑 주소" />
+      </label>
+      <button id="saveMerchantBtn" class="secondary" aria-label="정산 지갑 저장">정산 지갑 저장</button>
       <button id="connectWalletBtn" class="secondary" aria-label="지갑 연결">지갑 연결</button>
     </div>
   </header>

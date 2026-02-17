@@ -1,5 +1,7 @@
 const STORE_KEY = "agent_market_demo_v2";
 const TARGET_CHAIN_ID = "0x2105"; // Base Mainnet
+const USDC_BASE_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDC_MICRO_PER_VIRTUAL = 50000n; // 0.05 USDC per 1 VIRTUAL
 const MAX_TEXT_LEN = 120;
 
 const seedAgents = [
@@ -12,6 +14,7 @@ const state = {
   walletConnected: false,
   walletAddress: "-",
   walletFullAddress: "",
+  merchantAddress: "",
   balance: 1000,
   agents: [...seedAgents],
   holdings: {},
@@ -30,6 +33,10 @@ function sanitizeText(value, maxLen = MAX_TEXT_LEN) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLen);
+}
+
+function isValidAddress(addr) {
+  return /^0x[a-fA-F0-9]{40}$/.test(addr || "");
 }
 
 function loadState() {
@@ -57,10 +64,27 @@ function addMutedMessage(el, text) {
   el.appendChild(div);
 }
 
+function toUint256Hex(v) {
+  return v.toString(16).padStart(64, "0");
+}
+
+function encodeErc20TransferData(to, amountSmallestUnit) {
+  const selector = "a9059cbb"; // transfer(address,uint256)
+  const addr = to.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  const amt = toUint256Hex(amountSmallestUnit);
+  return `0x${selector}${addr}${amt}`;
+}
+
+function usdcMicroFromVirtual(priceVirtual) {
+  return BigInt(priceVirtual) * USDC_MICRO_PER_VIRTUAL;
+}
+
 function updateWalletView() {
   $("walletState").textContent = state.walletConnected ? "연결됨" : "미연결";
   $("walletAddress").textContent = state.walletAddress;
   $("balance").textContent = `${fmt(state.balance)} VIRTUAL`;
+  $("paymentMode").textContent = `USDC on Base (1 VIRTUAL = ${(Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000).toFixed(2)} USDC)`;
+  $("merchantAddress").value = state.merchantAddress || "";
   $("connectWalletBtn").textContent = state.walletConnected ? "지갑 연결 해제" : "지갑 연결";
 }
 
@@ -128,6 +152,18 @@ function disconnectWallet() {
   persistState();
 }
 
+function saveMerchantAddress() {
+  const input = sanitizeText($("merchantAddress").value, 80);
+  if (!isValidAddress(input)) {
+    alert("정산 지갑 주소 형식이 올바르지 않아요. 0x로 시작하는 42자 주소를 넣어줘.");
+    return;
+  }
+  state.merchantAddress = input;
+  appendTx({ type: "MERCHANT_SET", amount: 0, note: `merchant ${shortAddr(input)}` });
+  persistState();
+  updateWalletView();
+}
+
 function appendTx(tx) {
   state.txs.unshift({
     id: crypto.randomUUID(),
@@ -179,10 +215,12 @@ function renderAgents() {
     card.dataset.agentId = agent.id;
     card.dataset.agentType = agent.type;
 
+    const usdc = Number(usdcMicroFromVirtual(agent.price)) / 1_000_000;
+
     node.querySelector(".name").textContent = agent.name;
     node.querySelector(".tag").textContent = agent.type;
     node.querySelector(".desc").textContent = agent.desc;
-    node.querySelector(".price").textContent = `가격: ${fmt(agent.price)} VIRTUAL`;
+    node.querySelector(".price").textContent = `가격: ${fmt(agent.price)} VIRTUAL (~ ${usdc.toFixed(2)} USDC)`;
     node.querySelector(".owners").textContent = `오너: ${fmt(agent.owners)}`;
 
     node.querySelector(".viewBtn").addEventListener("click", () => selectAgent(agent.id));
@@ -201,9 +239,10 @@ function selectAgent(id) {
   wrap.classList.remove("empty");
 
   const owned = state.holdings[id] || 0;
+  const usdc = Number(usdcMicroFromVirtual(agent.price)) / 1_000_000;
   const lines = [
     ["카테고리", agent.type],
-    ["가격", `${fmt(agent.price)} VIRTUAL`],
+    ["가격", `${fmt(agent.price)} VIRTUAL (~ ${usdc.toFixed(2)} USDC)`],
     ["오너 수", fmt(agent.owners)],
     ["평점", String(agent.rating)],
     ["추정 MRR", `${fmt(agent.mrr)} VIRTUAL`],
@@ -224,7 +263,7 @@ function selectAgent(id) {
   });
 
   const btn = document.createElement("button");
-  btn.textContent = "이 상세에서 구매";
+  btn.textContent = "USDC로 구매";
   btn.addEventListener("click", () => buyAgent(agent.id));
   wrap.appendChild(document.createElement("br"));
   wrap.appendChild(btn);
@@ -232,12 +271,25 @@ function selectAgent(id) {
   persistState();
 }
 
+async function payWithUsdc(fromAddress, toAddress, amountMicro) {
+  const data = encodeErc20TransferData(toAddress, amountMicro);
+  const txParams = [{
+    from: fromAddress,
+    to: USDC_BASE_ADDRESS,
+    data,
+    value: "0x0"
+  }];
+
+  return window.ethereum.request({ method: "eth_sendTransaction", params: txParams });
+}
+
 async function buyAgent(id) {
   const agent = state.agents.find((a) => a.id === id);
   if (!agent) return;
 
-  if (!state.walletConnected) return alert("지갑을 먼저 연결해줘.");
-  if (state.balance < agent.price) return alert("잔액 부족");
+  if (!state.walletConnected || !state.walletFullAddress) return alert("지갑을 먼저 연결해줘.");
+  if (!state.merchantAddress || !isValidAddress(state.merchantAddress)) return alert("먼저 정산 지갑 주소를 저장해줘.");
+  if (state.balance < agent.price) return alert("시뮬레이션 잔액 부족");
 
   try {
     const chainId = await window.ethereum?.request?.({ method: "eth_chainId" });
@@ -246,19 +298,37 @@ async function buyAgent(id) {
     return alert("지갑 상태를 확인할 수 없어요.");
   }
 
-  const ok = confirm(`[구매 확인]\n에이전트: ${agent.name}\n가격: ${fmt(agent.price)} VIRTUAL\n진행할까?`);
+  const amountMicro = usdcMicroFromVirtual(agent.price);
+  const amountUsdc = Number(amountMicro) / 1_000_000;
+  const ok = confirm(
+    `[USDC 결제 확인]\n에이전트: ${agent.name}\n보내는 토큰: USDC\n금액: ${amountUsdc.toFixed(2)} USDC\n수령 주소: ${state.merchantAddress}\n진행할까?`
+  );
   if (!ok) return;
 
-  state.balance -= agent.price;
-  state.holdings[id] = (state.holdings[id] || 0) + 1;
-  agent.owners += 1;
+  try {
+    const txHash = await payWithUsdc(state.walletFullAddress, state.merchantAddress, amountMicro);
 
-  appendTx({ type: "BUY", amount: agent.price, note: `${agent.name} 1개 구매` });
-  updateWalletView();
-  renderPortfolio();
-  renderAgents();
-  if (state.selectedAgentId === id) selectAgent(id);
-  persistState();
+    state.balance -= agent.price;
+    state.holdings[id] = (state.holdings[id] || 0) + 1;
+    agent.owners += 1;
+
+    appendTx({
+      type: "BUY_USDC",
+      amount: agent.price,
+      note: `${agent.name} 결제 ${amountUsdc.toFixed(2)} USDC / tx ${txHash.slice(0, 10)}...`
+    });
+
+    updateWalletView();
+    renderPortfolio();
+    renderAgents();
+    if (state.selectedAgentId === id) selectAgent(id);
+    persistState();
+  } catch (err) {
+    console.error(err);
+    alert(`USDC 결제 실패: ${err?.message || "알 수 없는 오류"}`);
+    appendTx({ type: "BUY_FAILED", amount: 0, note: sanitizeText(err?.message || "payment failed", 120) });
+    persistState();
+  }
 }
 
 function renderPortfolio() {
@@ -341,6 +411,12 @@ function renderMachineState() {
     walletConnected: state.walletConnected,
     walletAddress: state.walletAddress,
     chainRequired: TARGET_CHAIN_ID,
+    payment: {
+      token: "USDC",
+      tokenAddress: USDC_BASE_ADDRESS,
+      merchantAddress: state.merchantAddress,
+      usdcPerVirtual: Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000
+    },
     balance: state.balance,
     agentCount: state.agents.length,
     holdingCount: Object.values(state.holdings).reduce((a, b) => a + b, 0),
@@ -385,6 +461,7 @@ function init() {
     await connectWallet();
   });
 
+  $("saveMerchantBtn").addEventListener("click", saveMerchantAddress);
   $("searchInput").addEventListener("input", renderAgents);
 }
 
