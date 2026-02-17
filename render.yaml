@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: virtuals-market-demo-api
+    runtime: docker
+    rootDir: server
+    envVars:
+      - key: PORT
+        value: 8788
+      - key: BASE_RPC_URL
+        value: https://mainnet.base.org
+      - key: USDC_BASE_ADDRESS
+        value: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+      - key: USDC_MICRO_PER_VIRTUAL
+        value: 50000
+      - key: ORDER_TTL_SECONDS
+        value: 900
+      - key: MERCHANT_ADDRESS
+        sync: false

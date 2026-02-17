@@ -6,6 +6,7 @@ const MAX_TEXT_LEN = 120;
 const TX_CONFIRMATIONS_REQUIRED = 2;
 const TX_POLL_MS = 2500;
 const TX_TIMEOUT_MS = 180000;
+const BACKEND_BASE_URL = localStorage.getItem("agent_market_backend_url") || "";
 
 const seedAgents = [
   { id: "a1", name: "SEO Writer Agent", type: "Content", desc: "키워드 리서치 + 블로그 초안 자동 작성", price: 120, owners: 214, rating: 4.6, mrr: 1800 },
@@ -70,6 +71,24 @@ function addMutedMessage(el, text) {
 
 function toUint256Hex(v) {
   return v.toString(16).padStart(64, "0");
+}
+
+function apiUrl(path) {
+  if (BACKEND_BASE_URL) return `${BACKEND_BASE_URL.replace(/\/$/, "")}${path}`;
+  return path;
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `api_error_${res.status}`);
+  }
+  return json;
 }
 
 function encodeErc20TransferData(to, amountSmallestUnit) {
@@ -337,7 +356,6 @@ async function buyAgent(id) {
   if (state.processingTx) return alert("이미 결제 처리 중이야. 잠시만 기다려줘.");
 
   if (!state.walletConnected || !state.walletFullAddress) return alert("지갑을 먼저 연결해줘.");
-  if (!state.merchantAddress || !isValidAddress(state.merchantAddress)) return alert("먼저 정산 지갑 주소를 저장해줘.");
   if (state.balance < agent.price) return alert("시뮬레이션 잔액 부족");
 
   try {
@@ -347,21 +365,45 @@ async function buyAgent(id) {
     return alert("지갑 상태를 확인할 수 없어요.");
   }
 
-  const amountMicro = usdcMicroFromVirtual(agent.price);
+  let order;
+  try {
+    order = await apiPost("/api/orders", {
+      agentId: agent.id,
+      buyerAddress: state.walletFullAddress
+    });
+  } catch (e) {
+    if (!state.merchantAddress || !isValidAddress(state.merchantAddress)) {
+      return alert(`오더 생성 실패(${e.message}). 백엔드 미사용시 정산 지갑을 먼저 저장해줘.`);
+    }
+    const amountMicro = usdcMicroFromVirtual(agent.price);
+    order = {
+      orderId: `local_${Date.now()}`,
+      merchantAddress: state.merchantAddress,
+      usdcAmountMicro: amountMicro.toString(),
+      usdcAmount: Number(amountMicro) / 1_000_000
+    };
+  }
+
+  const amountMicro = BigInt(order.usdcAmountMicro);
   const amountUsdc = Number(amountMicro) / 1_000_000;
+
   const ok = confirm(
-    `[USDC 결제 확인]\n에이전트: ${agent.name}\n보내는 토큰: USDC\n금액: ${amountUsdc.toFixed(2)} USDC\n수령 주소: ${state.merchantAddress}\n확정 대기: ${TX_CONFIRMATIONS_REQUIRED} 컨펌\n진행할까?`
+    `[USDC 결제 확인]\n에이전트: ${agent.name}\n보내는 토큰: USDC\n금액: ${amountUsdc.toFixed(2)} USDC\n수령 주소: ${order.merchantAddress}\n확정 대기: ${TX_CONFIRMATIONS_REQUIRED} 컨펌\n진행할까?`
   );
   if (!ok) return;
 
   try {
     setProcessingTx(true);
-    const txHash = await payWithUsdc(state.walletFullAddress, state.merchantAddress, amountMicro);
-    appendTx({ type: "TX_SUBMITTED", amount: 0, note: `tx ${txHash}` });
+    const txHash = await payWithUsdc(state.walletFullAddress, order.merchantAddress, amountMicro);
+    appendTx({ type: "TX_SUBMITTED", amount: 0, note: `order ${order.orderId} / tx ${txHash}` });
 
     const { receipt, confirmations } = await waitForReceiptConfirmed(txHash, TX_CONFIRMATIONS_REQUIRED);
     if (!receipt || receipt.status !== "0x1") {
       throw new Error("트랜잭션이 체인에서 실패(status!=1)했어.");
+    }
+
+    if (!String(order.orderId).startsWith("local_")) {
+      await apiPost(`/api/orders/${order.orderId}/confirm`, { txHash });
     }
 
     state.balance -= agent.price;
@@ -474,6 +516,7 @@ function renderMachineState() {
       token: "USDC",
       tokenAddress: USDC_BASE_ADDRESS,
       merchantAddress: state.merchantAddress,
+      backendBaseUrl: BACKEND_BASE_URL || "(same-origin or local fallback)",
       usdcPerVirtual: Number(USDC_MICRO_PER_VIRTUAL) / 1_000_000,
       requiredConfirmations: TX_CONFIRMATIONS_REQUIRED,
       timeoutMs: TX_TIMEOUT_MS
