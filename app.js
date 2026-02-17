@@ -407,8 +407,18 @@ async function buyAgent(id) {
       try {
         await apiPost(`/api/orders/${order.orderId}/confirm`, { txHash });
       } catch (e) {
-        // n8n webhook fallback
-        await apiPost(`/api/orders-confirm`, { orderId: order.orderId, txHash });
+        // n8n webhook fallback (stateless verify)
+        await apiPost(`/api/orders-confirm`, {
+          orderId: order.orderId,
+          txHash,
+          order: {
+            id: order.orderId,
+            buyerAddress: state.walletFullAddress,
+            merchantAddress: order.merchantAddress,
+            usdcAmountMicro: String(order.usdcAmountMicro),
+            expiresAt: order.expiresAt
+          }
+        });
       }
     }
 

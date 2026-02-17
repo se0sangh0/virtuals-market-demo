@@ -8,14 +8,9 @@
   - `n8n/workflows/virtuals-orders-create.json`
   - `n8n/workflows/virtuals-orders-confirm.json`
 
-## 1) n8n에 환경변수 추가
-n8n 실행 환경(도커/환경설정)에 아래 값을 추가:
-
-- `MERCHANT_ADDRESS=0x...` (USDC 수령 주소)
-- `USDC_MICRO_PER_VIRTUAL=50000`
-- `ORDER_TTL_SECONDS=900`
-- `BASE_RPC_URL=https://mainnet.base.org`
-- `USDC_BASE_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+## 1) n8n에 환경변수 추가 (선택)
+현재 워크플로우는 기본값 하드코딩으로도 동작해요.
+(필요하면 환경변수 방식으로 확장 가능)
 
 ### CORS 권장
 GitHub Pages에서 직접 호출하려면 CORS 필요:
@@ -52,5 +47,6 @@ location.reload()
 ## 6) 트러블슈팅
 - `api_error_404`: webhook path 또는 workflow inactive
 - CORS 에러: `N8N_CORS_ALLOW_ORIGIN` 설정/재시작 필요
-- `merchant_not_configured`: `MERCHANT_ADDRESS` 미설정
+- `merchant_address_required`: 프론트에서 정산 지갑 미입력
 - `tx_not_found_or_pending`: 아직 체인 반영 전 (잠시 후 재시도)
+- `order_expired`: 주문 생성 후 TTL(기본 15분) 경과
