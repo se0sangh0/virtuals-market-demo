@@ -369,7 +369,8 @@ async function buyAgent(id) {
   try {
     order = await apiPost("/api/orders", {
       agentId: agent.id,
-      buyerAddress: state.walletFullAddress
+      buyerAddress: state.walletFullAddress,
+      merchantAddress: state.merchantAddress || undefined
     });
   } catch (e) {
     if (!state.merchantAddress || !isValidAddress(state.merchantAddress)) {
