@@ -1,0 +1,61 @@
+{
+  "name": "virtuals-orders-confirm",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/orders-confirm",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook Confirm Order",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const body = $json || {};\nconst orderId = String(body.orderId || '').trim();\nconst txHash = String(body.txHash || '').trim();\n\nif (!orderId) return [{ json: { ok: false, error: 'order_id_required' } }];\nif (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) return [{ json: { ok: false, error: 'invalid_tx_hash' } }];\n\nconst store = $getWorkflowStaticData('global');\nif (!store.orders) store.orders = {};\nconst order = store.orders[orderId];\nif (!order) return [{ json: { ok: false, error: 'order_not_found' } }];\nif (order.status === 'confirmed') return [{ json: { ok: true, alreadyConfirmed: true, order } }];\nif (new Date(order.expiresAt).getTime() < Date.now()) return [{ json: { ok: false, error: 'order_expired' } }];\n\nconst rpcUrl = String($env.BASE_RPC_URL || 'https://mainnet.base.org');\nconst usdc = String($env.USDC_BASE_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913').toLowerCase();\n\nconst rpc = async (method, params) => {\n  const res = await fetch(rpcUrl, {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })\n  });\n  return res.json();\n};\n\nconst [txResp, rcResp] = await Promise.all([\n  rpc('eth_getTransactionByHash', [txHash]),\n  rpc('eth_getTransactionReceipt', [txHash])\n]);\n\nconst tx = txResp?.result;\nconst receipt = rcResp?.result;\nif (!tx || !receipt) return [{ json: { ok: false, error: 'tx_not_found_or_pending' } }];\nif (String(receipt.status).toLowerCase() !== '0x1') return [{ json: { ok: false, error: 'tx_failed' } }];\n\nif (String(tx.from || '').toLowerCase() !== String(order.buyerAddress).toLowerCase()) return [{ json: { ok: false, error: 'tx_from_mismatch' } }];\nif (String(tx.to || '').toLowerCase() !== usdc) return [{ json: { ok: false, error: 'tx_to_not_usdc_contract' } }];\n\nconst parseTransferInput = (data='') => {\n  if (!data.startsWith('0xa9059cbb')) return null;\n  const hex = data.slice(10);\n  if (hex.length < 128) return null;\n  const toHex = hex.slice(0, 64);\n  const amtHex = hex.slice(64, 128);\n  const to = `0x${toHex.slice(24)}`.toLowerCase();\n  const amount = BigInt(`0x${amtHex}`).toString();\n  return { to, amount };\n};\n\nconst parsed = parseTransferInput(String(tx.input || ''));\nif (!parsed) return [{ json: { ok: false, error: 'not_erc20_transfer' } }];\nif (parsed.to !== String(order.merchantAddress).toLowerCase()) return [{ json: { ok: false, error: 'merchant_mismatch' } }];\nif (parsed.amount !== String(order.usdcAmountMicro)) return [{ json: { ok: false, error: 'amount_mismatch' } }];\n\nstore.orders[order.id] = { ...order, status: 'confirmed', txHash, confirmedAt: new Date().toISOString() };\nreturn [{ json: { ok: true, order: store.orders[order.id] } }];"
+      },
+      "id": "2",
+      "name": "Confirm Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin", "value": "*" },
+              { "name": "Access-Control-Allow-Headers", "value": "content-type" }
+            ]
+          }
+        }
+      },
+      "id": "3",
+      "name": "Respond Confirm",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Confirm Order": {
+      "main": [[{ "node": "Confirm Logic", "type": "main", "index": 0 }]]
+    },
+    "Confirm Logic": {
+      "main": [[{ "node": "Respond Confirm", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

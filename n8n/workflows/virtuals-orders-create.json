@@ -1,0 +1,92 @@
+{
+  "name": "virtuals-orders-create",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "api/orders",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook Create Order",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "JavaScript",
+        "jsCode": "const body = $json || {};\nconst buyerAddress = String(body.buyerAddress || '').trim().toLowerCase();\nconst agentId = String(body.agentId || '').trim();\n\nconst isAddress = (v='') => /^0x[a-fA-F0-9]{40}$/.test(v);\nif (!isAddress(buyerAddress)) {\n  return [{ json: { ok: false, error: 'invalid_buyer_address' } }];\n}\n\nconst merchantAddress = String($env.MERCHANT_ADDRESS || '').trim().toLowerCase();\nif (!isAddress(merchantAddress)) {\n  return [{ json: { ok: false, error: 'merchant_not_configured' } }];\n}\n\nconst agentMap = { a1: 120, a2: 180, a3: 240 };\nconst vPrice = agentMap[agentId];\nif (!vPrice) {\n  return [{ json: { ok: false, error: 'invalid_agent' } }];\n}\n\nconst usdcMicroPerVirtual = BigInt($env.USDC_MICRO_PER_VIRTUAL || '50000');\nconst amountMicro = BigInt(vPrice) * usdcMicroPerVirtual;\n\nconst ttlSec = Number($env.ORDER_TTL_SECONDS || '900');\nconst now = Date.now();\nconst orderId = `ord_${now}_${Math.random().toString(36).slice(2,8)}`;\nconst expiresAt = new Date(now + ttlSec * 1000).toISOString();\n\nconst store = $getWorkflowStaticData('global');\nif (!store.orders) store.orders = {};\nstore.orders[orderId] = {\n  id: orderId,\n  agentId,\n  buyerAddress,\n  merchantAddress,\n  usdcAmountMicro: amountMicro.toString(),\n  status: 'pending',\n  txHash: null,\n  createdAt: new Date(now).toISOString(),\n  expiresAt,\n  confirmedAt: null\n};\n\nreturn [{\n  json: {\n    ok: true,\n    orderId,\n    agentId,\n    buyerAddress,\n    merchantAddress,\n    usdcAmountMicro: amountMicro.toString(),\n    usdcAmount: Number(amountMicro) / 1_000_000,\n    expiresAt\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Create Order Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "content-type"
+              }
+            ]
+          }
+        }
+      },
+      "id": "3",
+      "name": "Respond Create",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        770,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Create Order": {
+      "main": [
+        [
+          {
+            "node": "Create Order Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Order Logic": {
+      "main": [
+        [
+          {
+            "node": "Respond Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

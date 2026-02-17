@@ -403,7 +403,12 @@ async function buyAgent(id) {
     }
 
     if (!String(order.orderId).startsWith("local_")) {
-      await apiPost(`/api/orders/${order.orderId}/confirm`, { txHash });
+      try {
+        await apiPost(`/api/orders/${order.orderId}/confirm`, { txHash });
+      } catch (e) {
+        // n8n webhook fallback
+        await apiPost(`/api/orders-confirm`, { orderId: order.orderId, txHash });
+      }
     }
 
     state.balance -= agent.price;
